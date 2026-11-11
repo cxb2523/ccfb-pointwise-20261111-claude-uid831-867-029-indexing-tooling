@@ -9,3 +9,5 @@ pytube
 youtube-dl
 moviepy==1.0.3
 pytube
+imageio-ffmpeg
+pytest

@@ -39,6 +39,12 @@ import tempfile
 
 from dotenv import load_dotenv
 
+from src.indexing import (
+    MediaUnavailableError,
+    ingest_batch,
+    media_available,
+)
+
 # Configure logging for better debugging in deployed environments
 logging.basicConfig(
     level=logging.INFO,
@@ -72,6 +78,10 @@ if 'fetched_videos' not in st.session_state:
     st.session_state.fetched_videos = None
 if 'fetch_status' not in st.session_state:
     st.session_state.fetch_status = None
+
+# Probe the media capability bit once at startup; src.indexing caches it.
+if 'media_available' not in st.session_state:
+    st.session_state.media_available = media_available()
 
 
 def delete_file(file_path):
@@ -1477,6 +1487,63 @@ def initial_setup():
 
 
 
+MEDIA_UPLOAD_EXTENSIONS = ["mp4", "mov", "mp3", "wav"]
+
+
+def media_upload_section():
+    st.header("Media Upload (Audio/Video)")
+
+    # Capability bit: probed once at startup and cached by src.indexing.
+    if not st.session_state.media_available:
+        st.error(
+            "❌ Media ingestion is unavailable: the bundled ffmpeg binary is "
+            "missing or not executable. Text indexing is unaffected."
+        )
+        return
+
+    uploaded_files = st.file_uploader(
+        "Upload demo videos or podcast recordings for indexing",
+        type=MEDIA_UPLOAD_EXTENSIONS,
+        accept_multiple_files=True,
+    )
+
+    if st.button("Ingest Media"):
+        if not uploaded_files:
+            st.warning("Please upload at least one media file!")
+            return
+
+        # UploadedFile streams are not guaranteed seekable and ffmpeg only
+        # probes paths — the pipeline spools them to temp files internally.
+        items = [
+            {"kind": "media", "stream": f, "filename": f.name}
+            for f in uploaded_files
+        ]
+        try:
+            with st.spinner("Probing and ingesting media..."):
+                result = ingest_batch(items)
+        except MediaUnavailableError as e:
+            st.error(f"❌ {e}")
+            return
+
+        for warning in result.warnings:
+            st.warning(f"⚠️ {warning}")
+        for doc in result.documents:
+            media = doc["media"]
+            if media["video_codec"]:
+                detail = (
+                    f"{media['duration']:.1f}s, video={media['video_codec']}, "
+                    f"audio={media['audio_codec']}, "
+                    f"{media['display_width']}x{media['display_height']}"
+                )
+            else:
+                detail = (
+                    f"{media['duration']:.1f}s, audio={media['audio_codec']}, "
+                    f"{media['channels']}ch @ {media['sample_rate']}Hz"
+                )
+            st.success(f"✅ Indexed {doc['source']} — {detail}")
+        st.info(f"Batch complete: {len(result.documents)} ingested, {len(result.warnings)} skipped")
+
+
 def main():
     if not st.session_state.setup_complete or not st.session_state.index:
         initial_setup()
@@ -1491,13 +1558,16 @@ def main():
             st.session_state.index = None
             st.rerun()
     
-    tab1, tab2 = st.tabs(["Video URLs", "Channel Videos"])
-    
+    tab1, tab2, tab3 = st.tabs(["Video URLs", "Channel Videos", "Media Upload"])
+
     with tab1:
         video_urls_section()
-    
+
     with tab2:
         channel_videos_section()
+
+    with tab3:
+        media_upload_section()
 
 if __name__ == "__main__":
     main()
