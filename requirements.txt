@@ -1,0 +1,11 @@
+streamlit
+twelvelabs==0.4.11
+python-dotenv
+requests
+yt-dlp
+google-api-python-client
+isodate
+pytube
+youtube-dl
+moviepy==1.0.3
+pytube
